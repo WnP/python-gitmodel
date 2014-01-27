@@ -454,6 +454,10 @@ class RelatedFieldDescriptor(object):
         value = instance.__dict__[self.field.name]
         if value is None or isinstance(value, models.GitModel):
             return value
+        if isinstance(value, set):
+            return set([
+                self.field.to_model.get(v)
+                for v in value])
         return self.field.to_model.get(value)
 
     def __set__(self, instance, value):
@@ -461,8 +465,14 @@ class RelatedFieldDescriptor(object):
 
 
 class RelatedField(Field):
-    def __init__(self, model, **kwargs):
+    def __init__(self, model, foreign_key, relation='one2many', **kwargs):
+        '''
+        @foreign_key: str to_model foreign key attribute
+        @relation: in ['one2one', 'one2many', 'many2one', 'many2many']
+        '''
         self._to_model = model
+        self.foreign_key = foreign_key
+        self.relation = relation
         super(RelatedField, self).__init__(**kwargs)
 
     @property
@@ -489,10 +499,41 @@ class RelatedField(Field):
         # workspace.
         return self.workspace.register_model(self.to_model)
 
-    def to_python(self, value):
+    def clean(self, value, model_instance):
+        value = self.to_python(value, model_instance)
+        self.validate(value, model_instance)
+        return value
+
+    def set_one(self, value, model_instance):
+        setattr(value, self.foreign_key, model_instance)
+        value.save()
+
+    def set_many(self, values, model_instance):
+        for value in values:
+            fk_value = getattr(value, self.foreign_key)
+            setattr(
+                value,
+                self.foreign_key,
+                fk_value.add(model_instance.get_id())
+                if isinstance(fk_value, set)
+                else set([model_instance.get_id()]))
+            value.save()
+
+    def to_python(self, value, model_instance=None):
         from gitmodel import models
         if isinstance(value, models.GitModel):
-            return value.get_id()
+            if self.relation == 'one2one':
+                self.set_one(value, model_instance)
+                return value.get_id()
+            elif self.relation == 'one2many':
+                self.set_many(value, model_instance)
+                return value.get_id()
+            elif self.relation == 'many2one':
+                self.set_one(value, set([model_instance]))
+                return str(set([v.get_id for v in value]))
+            elif self.relation == 'many2many':
+                self.set_many(value, model_instance)
+                return str(set([v.get_id for v in value]))
         return value
 
     def serialize(self, obj):

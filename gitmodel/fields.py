@@ -454,10 +454,15 @@ class RelatedFieldDescriptor(object):
         value = instance.__dict__[self.field.name]
         if value is None or isinstance(value, models.GitModel):
             return value
-        if isinstance(value, set):
-            return set([
-                self.field.to_model.get(v)
-                for v in value])
+        if isinstance(value, (list, set, tuple)):
+            res = list()
+            add = res.append
+            for v in value:
+                if isinstance(v, models.GitModel):
+                    add(self.field.to_model.get(v.get_id()))
+                else:
+                    add(self.field.to_model.get(v))
+            return res
         return self.field.to_model.get(value)
 
     def __set__(self, instance, value):
@@ -505,35 +510,64 @@ class RelatedField(Field):
         return value
 
     def set_one(self, value, model_instance):
-        setattr(value, self.foreign_key, model_instance)
-        value.save()
+        from gitmodel import models
+        if isinstance(value, (list, set, tuple)):
+            for v in value:
+                if isinstance(v, models.GitModel):
+                    setattr(v, self.foreign_key, model_instance.get_id())
+                else:
+                    setattr(
+                        self.to_model.get(v),
+                        self.foreign_key,
+                        model_instance.get_id())
+        else:
+            setattr(value, self.foreign_key, model_instance.get_id())
 
-    def set_many(self, values, model_instance):
-        for value in values:
+    def set_many(self, value, model_instance):
+        for inst in model_instance:
             fk_value = getattr(value, self.foreign_key)
+            if isinstance(fk_value, (list, tuple, set)):
+                fk_value = set([v.get_id() for v in fk_value])
+                fk_value.add(inst.get_id())
+            else:
+                fk_value = set([inst.get_id()])
             setattr(
                 value,
                 self.foreign_key,
-                fk_value.add(model_instance.get_id())
-                if isinstance(fk_value, set)
-                else set([model_instance.get_id()]))
-            value.save()
+                fk_value)
 
     def to_python(self, value, model_instance=None):
         from gitmodel import models
-        if isinstance(value, models.GitModel):
+        if isinstance(value, (models.GitModel, list, set, tuple)):
             if self.relation == 'one2one':
                 self.set_one(value, model_instance)
                 return value.get_id()
             elif self.relation == 'one2many':
-                self.set_many(value, model_instance)
-                return value.get_id()
+                if model_instance:
+                    self.set_one(value, model_instance)
+                if isinstance(value, (list, set, tuple)):
+                    return [
+                        v.get_id()
+                        if isinstance(v, models.GitModel) else v
+                        for v in value]
+                else:
+                    return [
+                        value.get_id()
+                        if isinstance(value, models.GitModel) else value]
             elif self.relation == 'many2one':
-                self.set_one(value, set([model_instance]))
-                return str(set([v.get_id for v in value]))
+                self.set_many(value, set([model_instance]))
+                return value.get_id()
             elif self.relation == 'many2many':
                 self.set_many(value, model_instance)
-                return str(set([v.get_id for v in value]))
+                if isinstance(value, (list, set, tuple)):
+                    return [
+                        v.get_id()
+                        if isinstance(v, models.GitModel) else v
+                        for v in value]
+                else:
+                    return [
+                        value.get_id()
+                        if isinstance(value, models.GitModel) else value]
         return value
 
     def serialize(self, obj):

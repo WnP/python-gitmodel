@@ -339,7 +339,16 @@ class GitModel(object):
             return unicode(self).encode('utf-8')
         return '{0} object'.format(self._meta.model_name)
 
-    def save(self, commit=False, **commit_info):
+    def post_save(self, commit=False, **commit_info):
+        for field in self._meta.fields:
+            value = getattr(self, field.name)
+            if isinstance(value, GitModel):
+                value.save(commit=commit, recursif=False, **commit_info)
+            elif isinstance(value, (list, tuple, set)):
+                for val in value:
+                    val.save(commit=commit, recursif=False, **commit_info)
+
+    def save(self, commit=False, recursif=True, **commit_info):
         # make sure model has clean data
         self.full_clean()
 
@@ -384,6 +393,10 @@ class GitModel(object):
             self._meta.workspace.remove(rmpath)
 
         self._current_path = self.get_data_path()
+
+        if recursif:
+            # need to save all updated related fields
+            self.post_save(commit=commit, **commit_info)
 
         if commit:
             return workspace.commit(**commit_info)

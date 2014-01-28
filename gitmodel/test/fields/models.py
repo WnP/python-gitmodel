@@ -26,19 +26,42 @@ class Author(models.GitModel):
     url = fields.URLField(schemes=('http', 'https'), required=False)
 
 
+class User(Person):
+    password = fields.CharField()
+    last_login = fields.DateTimeField(required=False)
+
+
 class Post(models.GitModel):
-    author = fields.RelatedField(Author)
+    author = fields.RelatedField(
+        Author,
+        foreign_key='posts',
+        relation='many2one')
     slug = fields.SlugField(id=True)
     title = fields.CharField()
     body = fields.CharField()
     image = fields.BlobField(required=False)
     metadata = fields.JSONField(required=False)
+    last_readers = fields.RelatedField(
+        User,
+        foreign_key='last_read',
+        relation='one2many',
+        required=False)
 
 
-class User(Person):
-    password = fields.CharField()
-    last_login = fields.DateTimeField(required=False)
-    last_read = fields.RelatedField(Post, required=False)
+class Author(Author):
+    posts = fields.RelatedField(
+        Post,
+        foreign_key='author',
+        relation='one2many',
+        required=False)
+
+
+class User(User):
+    last_read = fields.RelatedField(
+        Post,
+        foreign_key='last_readers',
+        relation='many2one',
+        required=False)
 
 
 class GitObjectTestModel(models.GitModel):

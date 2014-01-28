@@ -459,7 +459,7 @@ class RelatedFieldDescriptor(object):
             add = res.append
             for v in value:
                 if isinstance(v, models.GitModel):
-                    add(self.field.to_model.get(v.get_id()))
+                    add(v)
                 else:
                     add(self.field.to_model.get(v))
             return res
@@ -509,8 +509,7 @@ class RelatedField(Field):
         self.validate(value, model_instance)
         return value
 
-    def set_one(self, value, model_instance):
-        from gitmodel import models
+    def set_one(self, value, model_instance, models):
         if isinstance(value, (list, set, tuple)):
             for v in value:
                 if isinstance(v, models.GitModel):
@@ -523,51 +522,56 @@ class RelatedField(Field):
         else:
             setattr(value, self.foreign_key, model_instance.get_id())
 
-    def set_many(self, value, model_instance):
-        for inst in model_instance:
+    def set_many(self, value, model_instance, models):
+        if isinstance(value, (list, tuple, set)):
+            for v in value:
+                self.set_many_for_one(v, model_instance, models)
+        else:
+            self.set_many_for_one(value, model_instance, models)
+
+    def set_many_for_one(self, value, model_instance, models):
+        if isinstance(value, models.GitModel):
             fk_value = getattr(value, self.foreign_key)
-            if isinstance(fk_value, (list, tuple, set)):
-                fk_value = set([v.get_id() for v in fk_value])
-                fk_value.add(inst.get_id())
-            else:
-                fk_value = set([inst.get_id()])
-            setattr(
-                value,
-                self.foreign_key,
-                fk_value)
+        else:
+            fk_value = getattr(self.to_model.get(value), self.foreign_key)
+        if isinstance(fk_value, (list, tuple, set)):
+            fk_value = set([v.get_id() for v in fk_value])
+            fk_value.add(model_instance.get_id())
+        else:
+            fk_value = set([model_instance.get_id()])
+        setattr(
+            value,
+            self.foreign_key,
+            fk_value)
+
+    def get_many(self, value, models):
+        if isinstance(value, (list, set, tuple)):
+            return [
+                v.get_id()
+                if isinstance(v, models.GitModel) else v
+                for v in value]
+        else:
+            return [
+                value.get_id()
+                if isinstance(value, models.GitModel) else value]
 
     def to_python(self, value, model_instance=None):
         from gitmodel import models
         if isinstance(value, (models.GitModel, list, set, tuple)):
             if self.relation == 'one2one':
-                self.set_one(value, model_instance)
+                self.set_one(value, model_instance, models)
                 return value.get_id()
             elif self.relation == 'one2many':
                 if model_instance:
-                    self.set_one(value, model_instance)
-                if isinstance(value, (list, set, tuple)):
-                    return [
-                        v.get_id()
-                        if isinstance(v, models.GitModel) else v
-                        for v in value]
-                else:
-                    return [
-                        value.get_id()
-                        if isinstance(value, models.GitModel) else value]
+                    self.set_one(value, model_instance, models)
+                return self.get_many(value, models)
             elif self.relation == 'many2one':
-                self.set_many(value, set([model_instance]))
+                self.set_many(value, model_instance, models)
                 return value.get_id()
             elif self.relation == 'many2many':
-                self.set_many(value, model_instance)
-                if isinstance(value, (list, set, tuple)):
-                    return [
-                        v.get_id()
-                        if isinstance(v, models.GitModel) else v
-                        for v in value]
-                else:
-                    return [
-                        value.get_id()
-                        if isinstance(value, models.GitModel) else value]
+                if model_instance:
+                    self.set_many(value, model_instance, models)
+                return self.get_many(value, models)
         return value
 
     def serialize(self, obj):

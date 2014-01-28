@@ -10,7 +10,7 @@ from urlparse import urlparse
 import pygit2
 
 from gitmodel.utils import isodate, json
-from gitmodel.exceptions import ValidationError, FieldError
+from gitmodel.exceptions import ValidationError, FieldError, RelationError, DoesNotExist
 
 INVALID_PATH_CHARS = ('/', '\000')
 
@@ -459,7 +459,7 @@ class RelatedFieldDescriptor(object):
             add = res.append
             for v in value:
                 if isinstance(v, models.GitModel):
-                    add(self.field.to_model.get(v.get_id()))
+                    add(v)
                 else:
                     add(self.field.to_model.get(v))
             return res
@@ -504,13 +504,40 @@ class RelatedField(Field):
         # workspace.
         return self.workspace.register_model(self.to_model)
 
+    def relation_check(self):
+        foreign_key_rel = getattr(self.to_model, self.foreign_key).field.relation
+        if self.relation in ['one2one', 'many2many']:
+            if foreign_key_rel != self.relation:
+                raise RelationError(
+                    'relation for %s must be %s, %s found.'
+                    % (
+                        self.relation,
+                        self.relation,
+                        foreign_key_rel))
+        elif self.relation == 'one2many':
+            if foreign_key_rel != 'many2one':
+                raise RelationError(
+                    'relation for %s must be %s, %s found.'
+                    % (
+                        self.relation,
+                        'many2one',
+                        foreign_key_rel))
+        elif self.relation == 'many2one':
+            if foreign_key_rel != 'one2many':
+                raise RelationError(
+                    'relation for %s must be %s, %s found.'
+                    % (
+                        self.relation,
+                        'one2many',
+                        foreign_key_rel))
+
     def clean(self, value, model_instance):
+        self.relation_check()
         value = self.to_python(value, model_instance)
         self.validate(value, model_instance)
         return value
 
-    def set_one(self, value, model_instance):
-        from gitmodel import models
+    def set_one(self, value, model_instance, models):
         if isinstance(value, (list, set, tuple)):
             for v in value:
                 if isinstance(v, models.GitModel):
@@ -523,51 +550,76 @@ class RelatedField(Field):
         else:
             setattr(value, self.foreign_key, model_instance.get_id())
 
-    def set_many(self, value, model_instance):
-        for inst in model_instance:
+    def set_many(self, value, model_instance, models):
+        if isinstance(value, (list, tuple, set)):
+            for v in value:
+                self.set_many_for_one(v, model_instance, models)
+        else:
+            self.set_many_for_one(value, model_instance, models)
+
+    def set_many_for_one(self, value, model_instance, models):
+        if isinstance(value, models.GitModel):
             fk_value = getattr(value, self.foreign_key)
-            if isinstance(fk_value, (list, tuple, set)):
-                fk_value = set([v.get_id() for v in fk_value])
-                fk_value.add(inst.get_id())
-            else:
-                fk_value = set([inst.get_id()])
-            setattr(
-                value,
-                self.foreign_key,
-                fk_value)
+        else:
+            fk_value = getattr(self.to_model.get(value), self.foreign_key)
+        if isinstance(fk_value, (list, tuple, set)):
+            fk_value = set([v.get_id() for v in fk_value])
+            fk_value.add(model_instance.get_id())
+        else:
+            fk_value = set([model_instance.get_id()])
+        setattr(
+            value,
+            self.foreign_key,
+            fk_value)
+
+    def get_many(self, value, models):
+        if isinstance(value, (list, set, tuple)):
+            return [
+                v.get_id()
+                if isinstance(v, models.GitModel) else v
+                for v in value]
+        else:
+            return [
+                value.get_id()
+                if isinstance(value, models.GitModel) else value]
+
+    def delete_one(self, model_instance):
+        if not model_instance:
+            return model_instance
+        inst = None
+        try:
+            inst = model_instance.get(model_instance.get_id())
+        except DoesNotExist:
+            pass
+        if inst:
+            pass
+
+    def check_delete(self, value, model_instance):
+        pass
 
     def to_python(self, value, model_instance=None):
         from gitmodel import models
-        if isinstance(value, (models.GitModel, list, set, tuple)):
+        if isinstance(value, (models.GitModel, list, set, tuple, type(None))):
+            if value is None:
+                self.delete_one(model_instance)
+                return value
             if self.relation == 'one2one':
-                self.set_one(value, model_instance)
+                self.set_one(value, model_instance, models)
                 return value.get_id()
-            elif self.relation == 'one2many':
+            if self.relation == 'one2many':
                 if model_instance:
-                    self.set_one(value, model_instance)
-                if isinstance(value, (list, set, tuple)):
-                    return [
-                        v.get_id()
-                        if isinstance(v, models.GitModel) else v
-                        for v in value]
-                else:
-                    return [
-                        value.get_id()
-                        if isinstance(value, models.GitModel) else value]
-            elif self.relation == 'many2one':
-                self.set_many(value, set([model_instance]))
+                    self.set_one(value, model_instance, models)
+                return self.get_many(value, models)
+            if self.relation == 'many2one':
+                self.set_many(value, model_instance, models)
+                if model_instance:
+                    self.check_delete(value, model_instance)
                 return value.get_id()
-            elif self.relation == 'many2many':
-                self.set_many(value, model_instance)
-                if isinstance(value, (list, set, tuple)):
-                    return [
-                        v.get_id()
-                        if isinstance(v, models.GitModel) else v
-                        for v in value]
-                else:
-                    return [
-                        value.get_id()
-                        if isinstance(value, models.GitModel) else value]
+            if self.relation == 'many2many':
+                if model_instance:
+                    self.set_many(value, model_instance, models)
+                    self.check_delete(value, model_instance)
+                return self.get_many(value, models)
         return value
 
     def serialize(self, obj):

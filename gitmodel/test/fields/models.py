@@ -24,6 +24,11 @@ class Author(models.GitModel):
     email = fields.EmailField()
     language = fields.CharField(default='en-US')
     url = fields.URLField(schemes=('http', 'https'), required=False)
+    is_person = fields.RelatedField(
+        Person,
+        foreign_key='is_author',
+        relation='one2one',
+        required=False)
 
 
 class User(Person):
@@ -32,10 +37,11 @@ class User(Person):
 
 
 class Post(models.GitModel):
-    author = fields.RelatedField(
+    authors = fields.RelatedField(
         Author,
         foreign_key='posts',
-        relation='many2one')
+        relation='many2many',
+        required=False)
     slug = fields.SlugField(id=True)
     title = fields.CharField()
     body = fields.CharField()
@@ -48,11 +54,19 @@ class Post(models.GitModel):
         required=False)
 
 
+class Person(Person):
+    is_author = fields.RelatedField(
+        Author,
+        foreign_key='is_person',
+        relation='one2one',
+        required=False)
+
+
 class Author(Author):
     posts = fields.RelatedField(
         Post,
-        foreign_key='author',
-        relation='one2many',
+        foreign_key='authors',
+        relation='many2many',
         required=False)
 
 

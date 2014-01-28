@@ -70,3 +70,11 @@ class ModelNotFound(Exception):
     Raised during deserialization if the model class no longer exists
     """
     pass
+
+
+class RelationError(Exception):
+    """
+    Raised if the RelatedField foreign key doesn't have the correct relation
+    """
+    def __init__(self, msg, **kwargs):
+        super(RelationError, self).__init__(msg)

@@ -31,6 +31,14 @@ class TestInstancesMixin(object):
             body='Lorem ipsum dolor sit amet',
         )
 
+        self.user = self.models.User(
+            slug='john-doe',
+            first_name='John',
+            last_name='Doe',
+            email='jdoe@example.com',
+            password='s3cr3tpA55',
+        )
+
 
 class FieldValidationTest(TestInstancesMixin, GitModelTestCase):
     def test_validate_not_empty(self):
@@ -191,13 +199,37 @@ class FieldTypeCheckingTest(TestInstancesMixin, GitModelTestCase):
 
 
 class RelatedFieldTest(TestInstancesMixin, GitModelTestCase):
-    def test_related(self):
+    def test_many2many(self):
         self.author.save()
-        self.post.author = self.author
+        self.post.authors = [self.author]
         self.post.save()
         post_id = self.post.get_id()
         post = self.models.Post.get(post_id)
-        self.assertTrue(post.author.get_id() == self.author.get_id())
+        self.assertTrue(self.author.get_id() in [a.get_id() for a in post.authors])
+
+    def test_one2many(self):
+        self.user.save()
+        self.post.last_readers = [self.user]
+        self.post.save()
+        post_id = self.post.get_id()
+        post = self.models.Post.get(post_id)
+        self.assertTrue(self.user.get_id() in [r.get_id() for r in post.last_readers])
+
+    def test_many2one(self):
+        self.post.save()
+        self.user.last_read = self.post
+        self.user.save()
+        user_id = self.user.get_id()
+        user = self.models.User.get(user_id)
+        self.assertTrue(self.post.get_id() == user.last_read.get_id())
+
+    def test_one2one(self):
+        self.person.save()
+        self.author.is_person = self.person
+        self.author.save()
+        author_id = self.author.get_id()
+        author = self.models.Author.get(author_id)
+        self.assertTrue(self.person.get_id() == author.is_person.get_id())
 
 
 class BlobFieldTest(TestInstancesMixin, GitModelTestCase):
@@ -205,7 +237,7 @@ class BlobFieldTest(TestInstancesMixin, GitModelTestCase):
         fd = open(os.path.join(os.path.dirname(__file__),
                                'git-logo-2color.png'))
         self.author.save()
-        self.post.author = self.author
+        self.post.authors = self.author
         self.post.image = fd
         self.post.save()
 
@@ -234,7 +266,7 @@ class InheritedFieldTest(TestInstancesMixin, GitModelTestCase):
 
     def test_inherited_related_fields(self):
         self.author.save()
-        self.post.author = self.author
+        self.post.authors = self.author
         self.post.save()
         user = self.models.User(
             slug='john-doe',
@@ -257,7 +289,7 @@ class JSONFieldTest(TestInstancesMixin, GitModelTestCase):
             'baz': 'qux'
         }
         self.author.save()
-        self.post.author = self.author
+        self.post.authors = self.author
         self.post.metadata = metadata
         self.post.save()
         post = self.models.Post.get(self.post.slug)
